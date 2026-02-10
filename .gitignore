@@ -1,0 +1,18 @@
+# Virtual environment
+venv/
+
+# Python
+__pycache__/
+*.pyc
+
+# Models
+models/*.pkl
+
+# Data (optional if large)
+data/*.csv
+
+# Reports
+reports/*.pdf
+
+# OS
+.DS_Store
