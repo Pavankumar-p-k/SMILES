@@ -1,125 +1,157 @@
-"""
-featurizer.py
+"""Feature extraction from SMILES strings."""
 
-Responsible for converting SMILES strings into numerical features
-for ADMET and toxicity prediction.
-
-Outputs:
-- Physicochemical descriptors (interpretable)
-- Morgan fingerprints (structural information)
-
-Author: Your Name
-"""
-
-from rdkit import Chem
-from rdkit.Chem import Descriptors, AllChem
+import logging
+from typing import Tuple, Optional
 import numpy as np
 import pandas as pd
+from rdkit import Chem
+from rdkit.Chem import AllChem, Descriptors
+
+from config import (
+    FINGERPRINT_BITS,
+    FINGERPRINT_RADIUS,
+    DESCRIPTOR_NAMES,
+)
+from utils import setup_logging
+
+logger = setup_logging(__name__)
 
 
-# -----------------------------
-# Descriptor configuration
-# -----------------------------
-
-DESCRIPTOR_FUNCTIONS = {
-    "MolWt": Descriptors.MolWt,
-    "LogP": Descriptors.MolLogP,
-    "HBD": Descriptors.NumHDonors,
-    "HBA": Descriptors.NumHAcceptors,
-    "TPSA": Descriptors.TPSA,
-    "RotatableBonds": Descriptors.NumRotatableBonds,
-    "AromaticRings": Descriptors.NumAromaticRings,
-    "HeavyAtomCount": Descriptors.HeavyAtomCount,
-}
-
-
-# -----------------------------
-# Core featurization functions
-# -----------------------------
-
-
-def smiles_to_mol(smiles: str):
+def is_valid_smiles(smiles: str) -> bool:
     """
-    Convert SMILES to RDKit Mol object.
+    Validate SMILES string.
 
-    Returns None if invalid.
-    """
-    if not isinstance(smiles, str):
-        return None
-    return Chem.MolFromSmiles(smiles)
-
-
-def compute_descriptors(mol):
-    """
-    Compute physicochemical descriptors from RDKit Mol.
+    Args:
+        smiles: SMILES string
 
     Returns:
-        dict of descriptor_name: value
+        True if valid, False otherwise
     """
-    return {name: func(mol) for name, func in DESCRIPTOR_FUNCTIONS.items()}
+    if not isinstance(smiles, str) or pd.isna(smiles):
+        return False
+    mol = Chem.MolFromSmiles(smiles)
+    return mol is not None
 
 
-def compute_morgan_fingerprint(mol, radius=2, n_bits=512):
+def compute_descriptors(smiles: str) -> np.ndarray:
     """
-    Compute Morgan fingerprint as numpy array.
+    Compute 7 physicochemical descriptors.
+
+    Args:
+        smiles: SMILES string
 
     Returns:
-        np.ndarray of shape (n_bits,)
-    """
-    fp = AllChem.GetMorganFingerprintAsBitVect(mol, radius=radius, nBits=n_bits)
-    return np.array(fp, dtype=int)
-
-
-def featurize_smiles(smiles: str):
-    """
-    Full featurization pipeline for a single SMILES.
-
-    Returns:
-        descriptor_vector (dict)
-        fingerprint_vector (np.ndarray)
+        Array of 7 descriptor values
 
     Raises:
-        ValueError if SMILES is invalid
+        ValueError: If SMILES invalid
     """
-    mol = smiles_to_mol(smiles)
+    mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         raise ValueError(f"Invalid SMILES: {smiles}")
 
-    descriptors = compute_descriptors(mol)
-    fingerprint = compute_morgan_fingerprint(mol)
+    return np.array(
+        [
+            Descriptors.MolWt(mol),
+            Descriptors.MolLogP(mol),
+            Descriptors.NumHDonors(mol),
+            Descriptors.NumHAcceptors(mol),
+            Descriptors.NumRotatableBonds(mol),
+            Descriptors.TPSA(mol),
+            Descriptors.NumAromaticRings(mol),
+        ]
+    )
 
-    return descriptors, fingerprint
 
-
-# -----------------------------
-# Batch featurization
-# -----------------------------
-
-
-def featurize_dataframe(df: pd.DataFrame, smiles_col: str = "smiles"):
+def compute_fingerprint(smiles: str):
     """
-    Featurize a DataFrame containing SMILES.
+    Compute 2048-bit Morgan fingerprint.
+
+    Args:
+        smiles: SMILES string
 
     Returns:
-        X_desc (pd.DataFrame)
-        X_fp (np.ndarray)
-        valid_indices (list)
+        Morgan fingerprint
+
+    Raises:
+        ValueError: If SMILES invalid
     """
-    descriptor_list = []
-    fingerprint_list = []
-    valid_indices = []
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        raise ValueError(f"Invalid SMILES: {smiles}")
 
-    for idx, smiles in enumerate(df[smiles_col]):
+    return AllChem.GetMorganFingerprintAsBitVect(
+        mol, radius=FINGERPRINT_RADIUS, nBits=FINGERPRINT_BITS
+    )
+
+
+def featurize_smiles(smiles: str) -> np.ndarray:
+    """
+    Generate complete feature vector (2055 dimensions).
+
+    Combines 7 descriptors + 2048-bit Morgan fingerprint.
+
+    Args:
+        smiles: SMILES string
+
+    Returns:
+        Feature vector (2055 dims)
+
+    Raises:
+        ValueError: If SMILES invalid
+    """
+    descriptors = compute_descriptors(smiles)
+    fp = compute_fingerprint(smiles)
+    fp_array = np.array(fp)
+    return np.concatenate([descriptors, fp_array])
+
+
+def featurize_batch(
+    smiles_list: list, remove_invalid: bool = True
+) -> Tuple[np.ndarray, list]:
+    """
+    Featurize multiple SMILES strings.
+
+    Args:
+        smiles_list: List of SMILES strings
+        remove_invalid: If True, skip invalid SMILES; else raise error
+
+    Returns:
+        Tuple of (X: feature matrix, valid_smiles: list)
+
+    Raises:
+        ValueError: If no valid SMILES found
+    """
+    features = []
+    valid_smiles = []
+
+    for smiles in smiles_list:
+        if not is_valid_smiles(smiles):
+            if remove_invalid:
+                logger.debug(f"Skipping invalid SMILES: {smiles}")
+                continue
+            else:
+                raise ValueError(f"Invalid SMILES: {smiles}")
+
         try:
-            desc, fp = featurize_smiles(smiles)
-            descriptor_list.append(desc)
-            fingerprint_list.append(fp)
-            valid_indices.append(idx)
-        except ValueError:
-            # Skip invalid SMILES
-            continue
+            feat = featurize_smiles(smiles)
+            features.append(feat)
+            valid_smiles.append(smiles)
+        except Exception as e:
+            if remove_invalid:
+                logger.debug(f"Error featurizing {smiles}: {e}")
+                continue
+            else:
+                raise
 
-    X_desc = pd.DataFrame(descriptor_list)
-    X_fp = np.vstack(fingerprint_list)
+    if len(features) == 0:
+        raise ValueError("No valid SMILES could be featurized")
 
-    return X_desc, X_fp, valid_indices
+    X = np.array(features)
+    logger.info(f"Featurized {len(valid_smiles)} molecules")
+    return X, valid_smiles
+
+
+def get_descriptor_names() -> list:
+    """Get list of all feature names."""
+    return DESCRIPTOR_NAMES
