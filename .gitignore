@@ -1,18 +1,27 @@
-# Virtual environment
+# Virtual environments
 venv/
+.venv/
+.runtime_venv/
+venv_shap/
 
-# Python
+# Python cache
 __pycache__/
 *.pyc
+*.pyo
 
-# Models
-models/*.pkl
+# Local logs/artifacts
+*.log
+run-holographic-ui-once.log
+admet-api*.log
 
-# Data (optional if large)
-data/*.csv
+# Frontend artifacts
+holographic-brain-ui/node_modules/
+holographic-brain-ui/dist/
+holographic-brain-ui/*.log
 
 # Reports
 reports/*.pdf
 
-# OS
+# OS/editor
 .DS_Store
+.vscode/
