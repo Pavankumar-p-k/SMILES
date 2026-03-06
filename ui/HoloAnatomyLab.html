@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
+<style>
+  :root {
+    --cyan: #00f5ff;
+    --cyan-dim: rgba(0,245,255,0.15);
+    --cyan-glow: 0 0 20px #00f5ff, 0 0 40px rgba(0,245,255,0.35);
+    --green: #00ff88;
+    --bg: #020b18;
+    --panel-bg: rgba(0,20,40,0.86);
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); font-family:"Share Tech Mono",monospace; color:var(--cyan); width:100vw; height:100vh; overflow:hidden; }
+  #bg-canvas { position:fixed; inset:0; z-index:0; }
+  body::before { content:""; position:fixed; inset:0; background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,245,255,0.015) 2px,rgba(0,245,255,0.015) 4px); pointer-events:none; z-index:999; }
+
+  .corner { position:fixed; width:52px; height:52px; z-index:100; }
+  .corner::before,.corner::after { content:""; position:absolute; background:var(--cyan); }
+  .corner::before { width:2px; height:100%; }
+  .corner::after  { width:100%; height:2px; }
+  .corner.tl { top:12px; left:12px; }
+  .corner.tr { top:12px; right:12px; transform:scaleX(-1); }
+  .corner.bl { bottom:12px; left:12px; transform:scaleY(-1); }
+  .corner.br { bottom:12px; right:12px; transform:scale(-1); }
+
+  #ui {
+    position:fixed;
+    inset:0;
+    z-index:10;
+    display:grid;
+    grid-template-columns:290px 1fr 320px;
+    grid-template-rows:70px 1fr 56px;
+  }
+
+  #topbar {
+    grid-column:1/-1;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:0 20px;
+    border-bottom:1px solid rgba(0,245,255,0.24);
+    background:rgba(2,11,24,0.92);
+    backdrop-filter:blur(16px);
+  }
+  .logo {
+    font-family:"Orbitron",sans-serif;
+    font-weight:900;
+    font-size:22px;
+    letter-spacing:7px;
+    text-shadow:var(--cyan-glow);
+  }
+  .topbar-center { display:flex; gap:14px; }
+  .stat {
+    border:1px solid rgba(0,245,255,0.22);
+    background:rgba(0,245,255,0.05);
+    min-width:96px;
+    padding:6px 8px;
+    text-align:center;
+  }
+  .stat-label { font-size:8px; letter-spacing:2px; opacity:0.68; }
+  .stat-value { margin-top:2px; font-size:14px; font-family:"Orbitron",sans-serif; color:#fff; }
+  .topbar-right { display:flex; align-items:center; gap:14px; font-size:10px; opacity:0.82; }
+  #clock { font-size:13px; color:var(--cyan); }
+
+  #left-panel, #right-panel {
+    padding:14px;
+    display:flex;
+    flex-direction:column;
+    gap:12px;
+    overflow:auto;
+    backdrop-filter:blur(18px);
+    background:rgba(2,11,24,0.9);
+  }
+  #left-panel { border-right:1px solid rgba(0,245,255,0.24); }
+  #right-panel { border-left:1px solid rgba(0,245,255,0.24); }
+
+  .panel-section {
+    background:var(--panel-bg);
+    border:1px solid rgba(0,245,255,0.2);
+    padding:12px;
+    position:relative;
+  }
+  .panel-section::before {
+    content:"";
+    position:absolute;
+    left:0;
+    right:0;
+    top:0;
+    height:1px;
+    background:linear-gradient(90deg,transparent,var(--cyan),transparent);
+  }
+  .section-title {
+    font-family:"Orbitron",sans-serif;
+    font-size:9px;
+    letter-spacing:3px;
+    margin-bottom:9px;
+    opacity:0.7;
+  }
+
+  .chip-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .chip {
+    border:1px solid rgba(0,245,255,0.25);
+    background:rgba(0,245,255,0.06);
+    padding:8px;
+    text-align:center;
+  }
+  .chip .x1 { font-size:8px; letter-spacing:2px; opacity:0.7; }
+  .chip .x2 { font-size:11px; margin-top:2px; color:#fff; }
+
+  .metric-row { margin-bottom:10px; }
+  .metric-label { font-size:9px; letter-spacing:2px; opacity:0.75; }
+  .metric-line { display:flex; justify-content:space-between; align-items:center; margin-top:4px; font-size:11px; }
+  .bar { height:4px; margin-top:4px; background:rgba(0,245,255,0.1); position:relative; }
+  .bar-fill { height:100%; background:linear-gradient(90deg,var(--cyan),#0066ff); box-shadow:0 0 10px rgba(0,245,255,0.4); }
+
+  #center-view { position:relative; }
+  .center-title {
+    position:absolute;
+    top:12px;
+    left:16px;
+    z-index:3;
+    font-family:"Orbitron",sans-serif;
+    font-size:10px;
+    letter-spacing:3px;
+    opacity:0.8;
+  }
+  svg#anatomy { width:100%; height:100%; }
+  .body-outline { stroke:rgba(0,245,255,0.75); stroke-width:2.2; fill:rgba(0,245,255,0.05); }
+  .organ { stroke-width:2; fill-opacity:0.2; filter:drop-shadow(0 0 8px currentColor); }
+  .org-label { font-size:11px; letter-spacing:1px; }
+
+  .flag { border:1px solid rgba(0,245,255,0.2); background:rgba(0,245,255,0.06); padding:8px; font-size:10px; margin-bottom:8px; }
+  .value-strong { font-family:"Orbitron",sans-serif; font-size:15px; }
+
+  #bottom-bar {
+    grid-column:1/-1;
+    border-top:1px solid rgba(0,245,255,0.24);
+    background:rgba(2,11,24,0.92);
+    backdrop-filter:blur(16px);
+    padding:0 20px;
+    display:flex;
+    align-items:center;
+    gap:12px;
+    font-size:10px;
+    letter-spacing:1.5px;
+  }
+</style>
+</head>
+<body>
+<canvas id="bg-canvas"></canvas>
+<div class="corner tl"></div>
+<div class="corner tr"></div>
+<div class="corner bl"></div>
+<div class="corner br"></div>
+
+<div id="ui">
+  <div id="topbar">
+    <div class="logo">HOLOSCAN</div>
+    <div class="topbar-center">
+      <div class="stat"><div class="stat-label">COMPOSITE</div><div class="stat-value" style="color:__RISK_COLOR__">__COMPOSITE_SCORE__</div></div>
+      <div class="stat"><div class="stat-label">BBB</div><div class="stat-value" style="color:__BRAIN_COLOR__">__BBB_PCT__</div></div>
+      <div class="stat"><div class="stat-label">DILI</div><div class="stat-value" style="color:__LIVER_COLOR__">__DILI_PCT__</div></div>
+      <div class="stat"><div class="stat-label">AMES</div><div class="stat-value" style="color:__GEN_COLOR__">__AMES_PCT__</div></div>
+      <div class="stat"><div class="stat-label">hERG</div><div class="stat-value" style="color:__HEART_COLOR__">__HERG_PCT__</div></div>
+    </div>
+    <div class="topbar-right"><span>AD: __AD_STATUS__</span><span id="clock">00:00:00</span></div>
+  </div>
+
+  <div id="left-panel">
+    <div class="panel-section">
+      <div class="section-title">// MODEL STACK (LIVE)</div>
+      <div class="chip-grid">
+        <div class="chip"><div class="x1">NEURAL</div><div class="x2">BBB / XGBoost</div></div>
+        <div class="chip"><div class="x1">LIVER</div><div class="x2">DILI / XGBoost</div></div>
+        <div class="chip"><div class="x1">GENETIC</div><div class="x2">Ames / RF</div></div>
+        <div class="chip"><div class="x1">CARDIAC</div><div class="x2">hERG / RF</div></div>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <div class="section-title">// LIVE PREDICTION PERCENTAGES</div>
+      <div class="metric-row">
+        <div class="metric-label">BBB (BRAIN)</div>
+        <div class="metric-line"><span>__BBB_SCORE__</span><span>__BBB_PCT__</span></div>
+        <div class="bar"><div class="bar-fill" style="width:__BBB_BAR__%; background:linear-gradient(90deg,#00f5ff,__BRAIN_COLOR__)" ></div></div>
+      </div>
+      <div class="metric-row">
+        <div class="metric-label">DILI (LIVER)</div>
+        <div class="metric-line"><span>__DILI_SCORE__</span><span>__DILI_PCT__</span></div>
+        <div class="bar"><div class="bar-fill" style="width:__DILI_BAR__%; background:linear-gradient(90deg,#00f5ff,__LIVER_COLOR__)" ></div></div>
+      </div>
+      <div class="metric-row">
+        <div class="metric-label">AMES (GENETIC)</div>
+        <div class="metric-line"><span>__AMES_SCORE__</span><span>__AMES_PCT__</span></div>
+        <div class="bar"><div class="bar-fill" style="width:__AMES_BAR__%; background:linear-gradient(90deg,#00f5ff,__GEN_COLOR__)" ></div></div>
+      </div>
+      <div class="metric-row" style="margin-bottom:0;">
+        <div class="metric-label">hERG (HEART)</div>
+        <div class="metric-line"><span>__HERG_SCORE__</span><span>__HERG_PCT__</span></div>
+        <div class="bar"><div class="bar-fill" style="width:__HERG_BAR__%; background:linear-gradient(90deg,#00f5ff,__HEART_COLOR__)" ></div></div>
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <div class="section-title">// INPUT SUMMARY</div>
+      <div style="font-size:10px; line-height:1.8; opacity:0.85;">
+        <div>SMILES: <span style="color:#fff">__SMILES_TEXT__</span></div>
+        <div>RISK CLASS: <span style="color:__RISK_COLOR__">__RISK_CATEGORY__</span></div>
+        <div>AD STATUS: <span style="color:#fff">__AD_STATUS_DETAIL__</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="center-view">
+    <div class="center-title">// HUMAN ANATOMY RISK MAP</div>
+    <svg id="anatomy" viewBox="0 0 600 620" aria-label="human anatomy panel">
+      <path class="body-outline" d="M300,55 C260,55 238,84 238,116 C238,141 248,160 264,175 L264,225 C220,244 199,290 199,342 L199,440 C199,476 213,505 240,526 L240,570 L264,570 L264,534 L336,534 L336,570 L360,570 L360,526 C387,505 401,476 401,440 L401,342 C401,290 380,244 336,225 L336,175 C352,160 362,141 362,116 C362,84 340,55 300,55 Z"/>
+
+      <circle class="organ" cx="300" cy="118" r="33" style="color:__BRAIN_COLOR__; stroke:__BRAIN_COLOR__; fill:__BRAIN_COLOR__; fill-opacity:__BRAIN_OPACITY__;"/>
+      <ellipse class="organ" cx="300" cy="300" rx="35" ry="30" style="color:__HEART_COLOR__; stroke:__HEART_COLOR__; fill:__HEART_COLOR__; fill-opacity:__HEART_OPACITY__;"/>
+      <ellipse class="organ" cx="300" cy="365" rx="58" ry="30" style="color:__LIVER_COLOR__; stroke:__LIVER_COLOR__; fill:__LIVER_COLOR__; fill-opacity:__LIVER_OPACITY__;"/>
+      <rect class="organ" x="273" y="462" width="54" height="50" rx="10" style="color:__GEN_COLOR__; stroke:__GEN_COLOR__; fill:__GEN_COLOR__; fill-opacity:__GEN_OPACITY__;"/>
+
+      <text x="354" y="118" class="org-label" fill="__BRAIN_COLOR__">BRAIN (__BBB_PCT__)</text>
+      <text x="354" y="300" class="org-label" fill="__HEART_COLOR__">hERG (__HERG_PCT__)</text>
+      <text x="354" y="365" class="org-label" fill="__LIVER_COLOR__">DILI (__DILI_PCT__)</text>
+      <text x="354" y="492" class="org-label" fill="__GEN_COLOR__">AMES (__AMES_PCT__)</text>
+    </svg>
+  </div>
+
+  <div id="right-panel">
+    <div class="panel-section">
+      <div class="section-title">// ORGAN RISK FLAGS</div>
+      __RISK_FLAGS_HTML__
+    </div>
+
+    <div class="panel-section">
+      <div class="section-title">// APPLICABILITY DOMAIN</div>
+      <div class="value-strong">__AD_STATUS__</div>
+      <div style="font-size:11px; margin-top:6px; opacity:0.84;">__AD_SIMILARITY__</div>
+    </div>
+
+    <div class="panel-section">
+      <div class="section-title">// RECOMMENDATION</div>
+      <div style="font-size:11px; line-height:1.7; opacity:0.9;">__RECOMMENDATION__</div>
+    </div>
+  </div>
+
+  <div id="bottom-bar">
+    <span>SYS LOG:</span>
+    <span>COMPOSITE __COMPOSITE_SCORE__ | BBB __BBB_PCT__ | DILI __DILI_PCT__ | AMES __AMES_PCT__ | hERG __HERG_PCT__ | RISK __RISK_CATEGORY__</span>
+  </div>
+</div>
+
+<script>
+function updateClock(){
+  const d=new Date();
+  const h=String(d.getHours()).padStart(2,'0');
+  const m=String(d.getMinutes()).padStart(2,'0');
+  const s=String(d.getSeconds()).padStart(2,'0');
+  const el=document.getElementById('clock');
+  if(el){el.textContent=`${h}:${m}:${s}`;}
+}
+setInterval(updateClock,1000); updateClock();
+
+(function(){
+  const canvas=document.getElementById('bg-canvas');
+  const ctx=canvas.getContext('2d');
+  let w=canvas.width=window.innerWidth;
+  let h=canvas.height=window.innerHeight;
+  const pts=Array.from({length:60},()=>({x:Math.random()*w,y:Math.random()*h,vx:(Math.random()-0.5)*0.3,vy:(Math.random()-0.5)*0.3}));
+  function tick(){
+    ctx.clearRect(0,0,w,h);
+    ctx.fillStyle='rgba(0,245,255,0.5)';
+    for(const p of pts){
+      p.x+=p.vx; p.y+=p.vy;
+      if(p.x<0||p.x>w)p.vx*=-1;
+      if(p.y<0||p.y>h)p.vy*=-1;
+      ctx.beginPath();
+      ctx.arc(p.x,p.y,1.2,0,Math.PI*2);
+      ctx.fill();
+    }
+    requestAnimationFrame(tick);
+  }
+  window.addEventListener('resize',()=>{w=canvas.width=window.innerWidth;h=canvas.height=window.innerHeight;});
+  tick();
+})();
+</script>
+</body>
+</html>

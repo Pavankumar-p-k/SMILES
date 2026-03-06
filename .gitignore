@@ -1,6 +1,27 @@
-*.i
-*.ii
-*.gpu
-*.ptx
-*.cubin
-*.fatbin
+# Virtual environments
+venv/
+.venv/
+.runtime_venv/
+venv_shap/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Local logs/artifacts
+*.log
+run-holographic-ui-once.log
+admet-api*.log
+
+# Frontend artifacts
+holographic-brain-ui/node_modules/
+holographic-brain-ui/dist/
+holographic-brain-ui/*.log
+
+# Reports
+reports/*.pdf
+
+# OS/editor
+.DS_Store
+.vscode/
