@@ -120,7 +120,8 @@ function centerScaleGeo(g, targetHeight) {
 function loadHumanAtlasModel() {
   if (humanAtlasModelPromise) return humanAtlasModelPromise;
   humanAtlasModelPromise = (async () => {
-    if (!HUMAN_ATLAS_B64) throw new Error("HUMAN_B64 not found in HoloAnatomyLab.html");    const humanText = await b64GzipToText(HUMAN_ATLAS_B64);
+    if (!HUMAN_ATLAS_B64) throw new Error("HUMAN_B64 not found in HoloAnatomyLab.html");
+    const humanText = await b64GzipToText(HUMAN_ATLAS_B64);
     const geometry = parseOBJText(humanText);
     const scale = centerScaleGeo(geometry, 3.2);
     geometry.computeVertexNormals();
@@ -714,6 +715,7 @@ const ENDPOINT_ORDER = ["BBB", "DILI", "Ames", "hERG"];
 const ENDPOINT_TO_ORGAN = { BBB: "brain", DILI: "liver", Ames: "genetic", hERG: "heart" };
 const ENDPOINT_COLORS = { BBB: "#AA44FF", DILI: "#FF6600", Ames: "#FF3EAA", hERG: "#FF2244" };
 const RISK_CATEGORY_COLORS = { Low: "#00ff88", Moderate: "#ffcc00", High: "#ff4d6d" };
+const ATLAS_THEME = { none: "#39FF88", normal: "#00A8FF", high: "#FF365E" };
 
 const fmtPercent = (p) => `${(Math.max(0, Math.min(1, Number(p) || 0)) * 100).toFixed(1)}%`;
 const fmtScore = (p) => (Number.isFinite(Number(p)) ? Number(p).toFixed(3) : "0.000");
@@ -723,6 +725,12 @@ const riskFromProb = (p) => {
   if (v >= 0.3) return "MODERATE";
   return "LOW";
 };
+
+function getAtlasTheme(summary) {
+  if (!summary) return { state: "NONE", color: ATLAS_THEME.none };
+  if (summary.risk_category === "High") return { state: "HIGH", color: ATLAS_THEME.high };
+  return { state: "NORMAL", color: ATLAS_THEME.normal };
+}
 
 function buildHomeOrganInfo(payload) {
   if (!payload?.organs) return {};
@@ -793,12 +801,8 @@ function DNASidePanel({ color, datasetReference, lastUpdated, predictionCount })
   );
 }
 
-//  HOME 
-function HomePage({ onNav }) {
-  const [hov, setHov] = useState(null);
-  const [cursorOrgan, setCursorOrgan] = useState(null);
-  const [tm, setTm] = useState(new Date());
-  const [smiles, setSmiles] = useState("CCO");
+function useLiveAdmet(initialSmiles = "CCO") {
+  const [smiles, setSmiles] = useState(initialSmiles);
   const [autoLive, setAutoLive] = useState(true);
   const [predicting, setPredicting] = useState(false);
   const [prediction, setPrediction] = useState(null);
@@ -806,8 +810,6 @@ function HomePage({ onNav }) {
   const [apiHealth, setApiHealth] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [runCount, setRunCount] = useState(0);
-  useEffect(()=>{const t=setInterval(()=>setTm(new Date()),1000);return()=>clearInterval(t);},[]);
-  const C="#00E5FF";
 
   const checkHealth = useCallback(async () => {
     try {
@@ -865,7 +867,7 @@ function HomePage({ onNav }) {
   const endpointInfo = activePrediction?.endpoint_info || {};
   const datasetReference = activePrediction?.dataset_reference || {};
   const riskCategory = summary?.risk_category || "N/A";
-  const riskColor = RISK_CATEGORY_COLORS[riskCategory] || C;
+  const riskColor = RISK_CATEGORY_COLORS[riskCategory] || "#00E5FF";
   const adStatus = activePrediction?.raw?.ad_status || "Unknown";
   const adSimilarity = activePrediction?.raw?.ad_similarity;
   const adText = Number.isFinite(adSimilarity) ? `${adStatus} (${Number(adSimilarity).toFixed(3)})` : adStatus;
@@ -887,6 +889,103 @@ function HomePage({ onNav }) {
       message: organData?.message || "No signal message",
     };
   });
+  const riskFlags = activePrediction?.risk_flags?.length
+    ? activePrediction.risk_flags
+    : [errorText ? `Prediction error: ${errorText}` : "Run prediction to generate organ risk flags."];
+  const recommendation = summary?.recommendation || "Awaiting prediction output.";
+  const systemOnline = Boolean(apiHealth?.ok);
+
+  return {
+    smiles,
+    setSmiles,
+    autoLive,
+    setAutoLive,
+    predicting,
+    runPrediction,
+    errorText,
+    apiHealth,
+    lastUpdated,
+    runCount,
+    activePrediction,
+    summary,
+    datasetReference,
+    riskCategory,
+    riskColor,
+    adStatus,
+    adText,
+    endpointRows,
+    riskFlags,
+    recommendation,
+    systemOnline,
+  };
+}
+
+function ModelRiskPanel({ color, live, focus }) {
+  const focusEndpoint = { brain: "BBB", heart: "hERG", liver: "DILI", dna: "Ames" }[focus] || "BBB";
+  const primary = live.endpointRows.find((r) => r.endpoint === focusEndpoint);
+  return (
+    <div style={{position:"absolute",right:18,top:126,zIndex:28,width:255,padding:"10px 12px",fontFamily:"'Orbitron',monospace",background:"rgba(2,10,20,0.9)",border:`1px solid ${color}88`,boxShadow:`0 0 26px ${color}55, inset 0 0 18px ${color}22`,backdropFilter:"blur(6px)"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:7}}>
+        <span style={{color,fontSize:9,letterSpacing:2.4}}>LIVE PREDICTION PANEL</span>
+        <span style={{color:live.systemOnline ? "#39FF88" : "#ff6f8f",fontSize:8,letterSpacing:1.2}}>{live.systemOnline ? "API ONLINE" : "API OFFLINE"}</span>
+      </div>
+      <div style={{display:"flex",gap:6,marginBottom:8}}>
+        <input
+          value={live.smiles}
+          onChange={(e)=>live.setSmiles(e.target.value)}
+          spellCheck={false}
+          placeholder="SMILES"
+          style={{flex:1,height:28,background:"#061120",border:`1px solid ${color}44`,color:"#d7fbff",padding:"0 8px",fontSize:9,fontFamily:"'Share Tech Mono',monospace",outline:"none"}}
+        />
+        <button
+          onClick={()=>live.runPrediction(live.smiles)}
+          disabled={live.predicting}
+          style={{width:72,height:28,border:`1px solid ${color}99`,background:live.predicting?`${color}22`:`${color}14`,color,fontSize:8,letterSpacing:1.3,fontFamily:"'Orbitron',monospace",cursor:"crosshair"}}
+        >
+          {live.predicting ? "WAIT" : "RUN"}
+        </button>
+      </div>
+      <div style={{marginBottom:8,padding:"6px 7px",border:`1px solid ${primary?.color || color}77`,background:`${primary?.color || color}1a`,boxShadow:`0 0 18px ${(primary?.color || color)}55`}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
+          <span style={{color:primary?.color || color,fontSize:10,letterSpacing:1.6,fontWeight:700}}>{focusEndpoint} FOCUS</span>
+          <span style={{color:"#ffffff",fontSize:16,letterSpacing:1.2,fontWeight:900,textShadow:`0 0 18px ${primary?.color || color}`}}>{primary?.pct || "N/A"}</span>
+        </div>
+        <div style={{marginTop:5,height:5,background:"#09111d",overflow:"hidden"}}>
+          <div style={{height:"100%",width:`${primary?.bar || 0}%`,background:`linear-gradient(to right,${color}88,${primary?.color || color})`,boxShadow:`0 0 14px ${primary?.color || color}`}}/>
+        </div>
+      </div>
+      {live.endpointRows.map((row)=>(
+        <div key={`model-risk-${row.endpoint}`} style={{padding:"5px 6px",marginBottom:4,border:`1px solid ${row.endpoint === focusEndpoint ? row.color + "99" : color + "24"}`,background:row.endpoint === focusEndpoint ? `${row.color}22` : `${color}08`,boxShadow:row.endpoint === focusEndpoint ? `0 0 14px ${row.color}44` : "none"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <span style={{color:row.color,fontSize:8.5,letterSpacing:1.2}}>{row.endpoint} . {row.risk}</span>
+            <span style={{color:"#d7fbff",fontSize:9,fontFamily:"'Share Tech Mono',monospace"}}>{row.score}</span>
+          </div>
+          <div style={{height:3,marginTop:3,background:"#0a1018"}}>
+            <div style={{height:"100%",width:`${row.bar}%`,background:`linear-gradient(to right,${row.color}66,${row.color})`}}/>
+          </div>
+        </div>
+      ))}
+      <div style={{marginTop:5,color:live.errorText ? "#ff6f8f" : `${color}99`,fontSize:8,fontFamily:"'Share Tech Mono',monospace"}}>
+        {live.errorText || `AD ${live.adText} | ${live.summary ? `COMPOSITE ${Number(live.summary.composite_score).toFixed(3)}` : "Awaiting run"}`}
+      </div>
+    </div>
+  );
+}
+
+//  HOME 
+function HomePage({ onNav, live }) {
+  const [hov, setHov] = useState(null);
+  const [cursorOrgan, setCursorOrgan] = useState(null);
+  const [tm, setTm] = useState(new Date());
+  useEffect(()=>{const t=setInterval(()=>setTm(new Date()),1000);return()=>clearInterval(t);},[]);
+  const C="#00E5FF";
+  const {
+    smiles, setSmiles, autoLive, setAutoLive, predicting, runPrediction, errorText,
+    lastUpdated, runCount, activePrediction, summary, datasetReference, riskCategory,
+    riskColor, adStatus, adText, endpointRows, riskFlags, recommendation, systemOnline,
+  } = live;
+  const atlasTheme = getAtlasTheme(summary);
+  const atlasThemeColor = atlasTheme.color;
   const organPopupData = buildHomeOrganInfo(activePrediction);
   const organPopup = organPopupData[cursorOrgan] || null;
 
@@ -901,19 +1000,13 @@ function HomePage({ onNav }) {
     { id:"dna", label:"GENOMIC ATLAS", sub:"DNA Structure", color:"#FF3EAA", icon:"GN", stat:ames ? `${ames.pct} AMES` : "No data" },
   ];
 
-  const riskFlags = activePrediction?.risk_flags?.length
-    ? activePrediction.risk_flags
-    : [errorText ? `Prediction error: ${errorText}` : "Run prediction to generate organ risk flags."];
-  const recommendation = summary?.recommendation || "Awaiting prediction output.";
-  const systemOnline = Boolean(apiHealth?.ok);
-
   return (
     <div style={{width:"100%",height:"100%",position:"relative",overflow:"hidden"}}>
       {/* Scan line */}
       <div style={{position:"absolute",left:0,right:0,height:1,background:`linear-gradient(to right,transparent,${C}44 30%,${C}44 70%,transparent)`,animation:"scanLine 7s linear infinite",zIndex:2,pointerEvents:"none"}}/>
 
       {/* CENTER 3D BODY */}
-      <div style={{position:"absolute",left:"50%",top:0,bottom:32,width:600,transform:"translateX(-50%)",zIndex:5}}>
+      <div style={{position:"absolute",left:"50%",top:0,bottom:32,width:640,transform:"translateX(-50%)",zIndex:5}}>
         <Canvas camera={{position:[0,0.5,6.5],fov:44}} dpr={[1,1]} gl={{antialias:false,alpha:true,powerPreference:"high-performance"}} style={{background:"transparent",width:"100%",height:"100%"}} onPointerMissed={()=>setCursorOrgan(null)}>
           <BodyScene highlight={hov} onCursorOrganChange={setCursorOrgan}/>
           <points>
@@ -948,27 +1041,30 @@ function HomePage({ onNav }) {
       </div>
 
       {/* LEFT PANEL */}
-      <div style={{position:"absolute",left:18,top:72,bottom:40,width:210,zIndex:10,display:"flex",flexDirection:"column",gap:7,fontFamily:"'Orbitron',monospace"}}>
-        <div style={{color:C,fontSize:8,letterSpacing:3,opacity:0.5}}>MODEL STACK</div>
+      <div style={{position:"absolute",left:14,top:70,bottom:38,width:258,zIndex:10,display:"flex",flexDirection:"column",gap:8,fontFamily:"'Orbitron',monospace",border:`1px solid ${atlasThemeColor}26`,padding:"10px 10px 8px",background:"rgba(2,10,20,0.35)",boxShadow:`0 0 24px ${atlasThemeColor}22`}}>
+        <div style={{color:atlasThemeColor,fontSize:8,letterSpacing:3,opacity:0.9}}>MODEL STACK</div>
         {endpointRows.map((row)=>(
-          <div key={row.endpoint} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"5px 8px",border:`1px solid ${C}12`,borderRadius:3,background:`${C}03`}}>
+          <div key={row.endpoint} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 8px",border:`1px solid ${atlasThemeColor}33`,borderRadius:3,background:`${atlasThemeColor}0d`}}>
             <span style={{color:`${C}66`,fontSize:7.5,letterSpacing:1.2}}>{row.endpoint} / {row.modelType}</span>
             <span style={{color:row.color,fontSize:8,fontFamily:"'Share Tech Mono',monospace"}}>{row.risk}</span>
           </div>
         ))}
-        <div style={{marginTop:6,color:C,fontSize:8,letterSpacing:3,opacity:0.5}}>LIVE PREDICTION %</div>
-        {endpointRows.map((row)=>(
-          <div key={`${row.endpoint}-bar`} style={{marginBottom:4}}>
+        <div style={{marginTop:6,color:atlasThemeColor,fontSize:8,letterSpacing:3,opacity:0.92}}>LIVE PREDICTION %</div>
+        {endpointRows.map((row)=>{
+          const rowTone = !activePrediction ? ATLAS_THEME.none : (Number(row.bar) >= 70 ? ATLAS_THEME.high : ATLAS_THEME.normal);
+          const rowLevel = !activePrediction ? "NONE" : (Number(row.bar) >= 70 ? "HIGH" : "LOW");
+          return (
+          <div key={`${row.endpoint}-bar`} style={{marginBottom:5,padding:"5px 6px",border:`1px solid ${rowTone}55`,background:`${rowTone}14`,boxShadow:`0 0 14px ${rowTone}33`}}>
             <div style={{display:"flex",justifyContent:"space-between",marginBottom:2}}>
               <span style={{color:`${C}55`,fontSize:7.5,letterSpacing:1}}>{row.endpoint}</span>
-              <span style={{color:row.color,fontSize:8,fontFamily:"'Share Tech Mono',monospace"}}>{row.pct}</span>
+              <span style={{color:rowTone,fontSize:8,fontFamily:"'Share Tech Mono',monospace"}}>{row.pct} . {rowLevel}</span>
             </div>
             <div style={{height:3,background:"#0a1015",borderRadius:2,overflow:"hidden"}}>
-              <div style={{height:"100%",width:`${row.bar}%`,background:`linear-gradient(to right,${C}66,${row.color})`}}/>
+              <div style={{height:"100%",width:`${row.bar}%`,background:`linear-gradient(to right,${rowTone}66,${rowTone})`,boxShadow:`0 0 14px ${rowTone}`}}/>
             </div>
           </div>
-        ))}
-        <div style={{marginTop:8,padding:"8px 10px",border:`1px solid ${C}18`,borderRadius:3,background:`${C}04`}}>
+        )})}
+        <div style={{marginTop:8,padding:"8px 10px",border:`1px solid ${atlasThemeColor}45`,borderRadius:3,background:`${atlasThemeColor}10`,boxShadow:`0 0 16px ${atlasThemeColor}33`}}>
           <div style={{color:C,fontSize:11,letterSpacing:2,fontWeight:700}}>INPUT SUMMARY</div>
           <div style={{color:`${C}55`,fontSize:7.5,letterSpacing:1.5,marginTop:3}}>SMILES: <span style={{color:"#d7fbff"}}>{smiles || "N/A"}</span></div>
           <div style={{color:`${C}55`,fontSize:7.5,letterSpacing:1.5,marginTop:2}}>RISK: <span style={{color:riskColor}}>{riskCategory}</span></div>
@@ -979,8 +1075,8 @@ function HomePage({ onNav }) {
       </div>
 
       {/* RIGHT PANEL */}
-      <div style={{position:"absolute",right:18,top:72,bottom:40,width:230,zIndex:10,display:"flex",flexDirection:"column",gap:10,fontFamily:"'Orbitron',monospace"}}>
-        <div style={{padding:"8px 10px",border:`1px solid ${C}14`,borderRadius:4,background:`${C}03`}}>
+      <div style={{position:"absolute",right:14,top:70,bottom:38,width:280,zIndex:10,display:"flex",flexDirection:"column",gap:10,fontFamily:"'Orbitron',monospace",border:`1px solid ${atlasThemeColor}26`,padding:"10px 10px 8px",background:"rgba(2,10,20,0.35)",boxShadow:`0 0 24px ${atlasThemeColor}22`}}>
+        <div style={{padding:"8px 10px",border:`1px solid ${atlasThemeColor}55`,borderRadius:4,background:`${atlasThemeColor}10`,boxShadow:`0 0 18px ${atlasThemeColor}33`}}>
           <div style={{color:C,fontSize:8,letterSpacing:3,opacity:0.7,marginBottom:7}}>SMILES INPUT</div>
           <input
             value={smiles}
@@ -992,7 +1088,7 @@ function HomePage({ onNav }) {
           />
           <div style={{display:"flex",gap:6,marginTop:7}}>
             <button onClick={()=>runPrediction(smiles)} disabled={predicting}
-              style={{flex:1,height:26,border:`1px solid ${C}55`,background:predicting?`${C}18`:`${C}10`,color:C,fontSize:9,letterSpacing:1.5,fontFamily:"'Orbitron',monospace",cursor:"crosshair"}}>
+              style={{flex:1,height:26,border:`1px solid ${atlasThemeColor}99`,background:predicting?`${atlasThemeColor}24`:`${atlasThemeColor}12`,color:atlasThemeColor,fontSize:9,letterSpacing:1.5,fontFamily:"'Orbitron',monospace",cursor:"crosshair"}}>
               {predicting ? "RUNNING..." : "RUN PREDICT"}
             </button>
             <button onClick={()=>setAutoLive((v)=>!v)}
@@ -1005,29 +1101,29 @@ function HomePage({ onNav }) {
           </div>
         </div>
 
-        <div style={{padding:"8px 10px",border:`1px solid ${C}10`,borderRadius:4,background:`${C}02`}}>
+        <div style={{padding:"8px 10px",border:`1px solid ${atlasThemeColor}44`,borderRadius:4,background:`${atlasThemeColor}10`,boxShadow:`0 0 16px ${atlasThemeColor}22`}}>
           <div style={{color:`${C}55`,fontSize:7.5,letterSpacing:2,marginBottom:6}}>ORGAN RISK FLAGS</div>
           {riskFlags.map((flag, i)=>(
             <div key={`${flag}-${i}`} style={{fontSize:8.5,lineHeight:1.5,color:`${C}88`,marginBottom:5,border:`1px solid ${C}14`,padding:"5px 6px",background:`${C}03`}}>{flag}</div>
           ))}
         </div>
 
-        <div style={{padding:"8px 10px",border:`1px solid ${C}10`,borderRadius:4,background:`${C}02`}}>
+        <div style={{padding:"8px 10px",border:`1px solid ${atlasThemeColor}44`,borderRadius:4,background:`${atlasThemeColor}10`,boxShadow:`0 0 16px ${atlasThemeColor}22`}}>
           <div style={{color:`${C}55`,fontSize:7.5,letterSpacing:2,marginBottom:5}}>RECOMMENDATION</div>
           <div style={{fontSize:8.5,lineHeight:1.6,color:riskColor}}>{recommendation}</div>
         </div>
 
-        <div style={{color:C,fontSize:8,letterSpacing:3,opacity:0.5}}>ANATOMY MODULES</div>
+        <div style={{color:atlasThemeColor,fontSize:8,letterSpacing:3,opacity:0.95}}>ANATOMY MODULES</div>
         {cards.map(({id,label,sub,color,icon,stat})=>(
           <button key={id} onClick={()=>onNav(id)} onMouseEnter={()=>setHov(id)} onMouseLeave={()=>setHov(null)}
-            style={{padding:"11px 13px",background:hov===id?`${color}14`:`${C}02`,border:`1px solid ${hov===id?color:color+"33"}`,borderRadius:4,cursor:"crosshair",textAlign:"left",transition:"all 0.25s ease",boxShadow:hov===id?`0 0 24px ${color}33`:"none",transform:hov===id?"translateX(-4px)":"none",fontFamily:"'Orbitron',monospace"}}>
+            style={{padding:"12px 13px",background:hov===id?`${atlasThemeColor}22`:`${atlasThemeColor}0d`,border:`1px solid ${hov===id?atlasThemeColor:atlasThemeColor+"77"}`,borderRadius:4,cursor:"crosshair",textAlign:"left",transition:"all 0.25s ease",boxShadow:hov===id?`0 0 26px ${atlasThemeColor}66`:`0 0 16px ${atlasThemeColor}26`,transform:hov===id?"translateX(-4px)":"none",fontFamily:"'Orbitron',monospace"}}>
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:5}}>
-              <span style={{color,fontSize:13}}>{icon}</span>
-              <span style={{color,fontSize:9,letterSpacing:2,fontWeight:700}}>{label}</span>
+              <span style={{color:atlasThemeColor,fontSize:13,textShadow:`0 0 12px ${atlasThemeColor}`}}>{icon}</span>
+              <span style={{color:atlasThemeColor,fontSize:9,letterSpacing:2,fontWeight:700}}>{label}</span>
             </div>
-            <div style={{color:`${color}88`,fontSize:8,letterSpacing:1.5,marginBottom:3}}>{sub}</div>
-            <div style={{height:1,background:`linear-gradient(to right,${color}44,transparent)`,marginBottom:5}}/>
-            <div style={{color:`${color}66`,fontSize:8,fontFamily:"'Share Tech Mono',monospace"}}>{stat}</div>
+            <div style={{color:`${atlasThemeColor}cc`,fontSize:8,letterSpacing:1.5,marginBottom:3}}>{sub}</div>
+            <div style={{height:1,background:`linear-gradient(to right,${atlasThemeColor}66,transparent)`,marginBottom:5}}/>
+            <div style={{color:`${atlasThemeColor}dd`,fontSize:8,fontFamily:"'Share Tech Mono',monospace"}}>{stat}</div>
           </button>
         ))}
         <DNASidePanel color={C} datasetReference={datasetReference} lastUpdated={lastUpdated} predictionCount={runCount}/>
@@ -1039,12 +1135,12 @@ function HomePage({ onNav }) {
           COMPOSITE {summary ? Number(summary.composite_score).toFixed(3) : "N/A"} | BBB {bbb?.pct || "N/A"} | DILI {dili?.pct || "N/A"} | AMES {ames?.pct || "N/A"} | hERG {herg?.pct || "N/A"}
         </span>
         <span style={{color:`${C}33`,fontSize:8,letterSpacing:1}}>DRAG TO ROTATE | HOVER ORGANS FOR LIVE POPUP</span>
-        <span style={{color:riskColor,fontSize:8,letterSpacing:2}}>RISK {riskCategory} | AD {adStatus}</span>
+        <span style={{color:atlasThemeColor,fontSize:8,letterSpacing:2}}>LEVEL {atlasTheme.state === "NONE" ? "NONE" : atlasTheme.state === "HIGH" ? "HIGH" : "LOW"} | RISK {riskCategory} | AD {adStatus}</span>
       </div>
     </div>
   );
 }
-function BrainPage() {
+function BrainPage({ live }) {
   const [mode,setMode]=useState("human");const [tr,setTr]=useState(false);
   const isH=mode==="human";const color=isH?"#00E5FF":"#39FF88";
   const sw=m=>{if(m===mode)return;setTr(true);setTimeout(()=>{setMode(m);setTr(false);},400);};
@@ -1081,13 +1177,14 @@ function BrainPage() {
         structs={isH?["Cerebrum","Cerebellum","Brainstem","Corpus Callosum"]:["Olfactory Bulb","Cortex","Cerebellum","Brainstem"]}
         specimen={isH?"HUMAN":"RODENT"}
       />
+      <ModelRiskPanel color={color} live={live} focus="brain" />
     </div>
   );
 }
 function BrainRotate({geo,color,isH}){const r=useRef();useFrame(({clock})=>{if(r.current){r.current.rotation.y=clock.elapsedTime*0.11;r.current.position.y=Math.sin(clock.elapsedTime*0.7)*0.03;}});return <group ref={r} scale={isH?1:0.92}><mesh geometry={geo}><meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.55} transparent opacity={0.24} metalness={0.18} roughness={0.35} depthWrite={false}/></mesh><HoloMesh geo={geo} color={color} opacity={0.92}/><mesh geometry={geo}><meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.22} transparent opacity={0.14} wireframe depthWrite={false}/></mesh><BrainLobes color={color} isRat={!isH}/></group>;}
 
 //  HEART PAGE 
-function HeartPage() {
+function HeartPage({ live }) {
   const [mode,setMode]=useState("human");const [tr,setTr]=useState(false);
   const isH=mode==="human";const color=isH?"#FF1A3C":"#FF6B1A";
   const sw=m=>{if(m===mode)return;setTr(true);setTimeout(()=>{setMode(m);setTr(false);},450);};
@@ -1117,13 +1214,14 @@ function HeartPage() {
         structs={["Aortic Valve","Mitral Valve","Tricuspid Valve","Pulmonary Valve","Coronary Arteries","Interventricular Septum"]}
         specimen={isH?"HUMAN":"RODENT"} ecg
       />
+      <ModelRiskPanel color={color} live={live} focus="heart" />
     </div>
   );
 }
 function HeartRotate({color,isH}){const r=useRef();useFrame(({clock})=>{if(r.current)r.current.rotation.y=clock.elapsedTime*(isH?0.08:0.1);});return <group ref={r}><HeartBeatGroup color={color} isRat={!isH}/></group>;}
 
 //  LIVER PAGE 
-function LiverPage() {
+function LiverPage({ live }) {
   const [mode,setMode]=useState("human");const [tr,setTr]=useState(false);
   const isH=mode==="human";const color=isH?"#FF6B35":"#A8FF3E";
   const sw=m=>{if(m===mode)return;setTr(true);setTimeout(()=>{setMode(m);setTr(false);},400);};
@@ -1154,6 +1252,7 @@ function LiverPage() {
         enzymes={isH?[{n:"ALT",v:32,m:56},{n:"AST",v:28,m:40},{n:"ALP",v:74,m:120},{n:"GGT",v:22,m:60}]:[{n:"ALT",v:45,m:80},{n:"AST",v:90,m:150},{n:"ALP",v:90,m:180},{n:"GGT",v:12,m:40}]}
         specimen={isH?"HUMAN":"RODENT"}
       />
+      <ModelRiskPanel color={color} live={live} focus="liver" />
     </div>
   );
 }
@@ -1207,7 +1306,7 @@ function DNAHelix({ color, dna, stream }) {
 }
 
 //  DNA PAGE 
-function DNAPage() {
+function DNAPage({ live }) {
   const [mode,setMode]=useState("human");const [tr,setTr]=useState(false);
   const isH=mode==="human";const color=isH?"#00CFFF":"#FF3EAA";
   const sw=m=>{if(m===mode)return;setTr(true);setTimeout(()=>{setMode(m);setTr(false);},400);};
@@ -1298,6 +1397,7 @@ function DNAPage() {
         specimen={isH?"HUMAN":"RODENT"}
         bases={isH?[{n:"A",p:30.9,c:"#F46A6A"},{n:"T",p:29.4,c:"#F8D552"},{n:"G",p:19.9,c:"#55B8FF"},{n:"C",p:19.8,c:"#68E989"}]:[{n:"A",p:29.4,c:"#FF76A4"},{n:"T",p:28.8,c:"#FFB15A"},{n:"G",p:21.2,c:"#8CE7B0"},{n:"C",p:20.6,c:"#B5A0FF"}]}
       />
+      <ModelRiskPanel color={color} live={live} focus="dna" />
     </div>
   );
 }
@@ -1394,7 +1494,14 @@ function NavBar({ page, onNav }) {
 // 
 export default function BioLabApp() {
   const [page,setPage]=useState("home");
-  const pages={home:<HomePage onNav={setPage}/>,brain:<BrainPage/>,heart:<HeartPage/>,liver:<LiverPage/>,dna:<DNAPage/>};
+  const live = useLiveAdmet("CCO");
+  const pages={
+    home:<HomePage onNav={setPage} live={live}/>,
+    brain:<BrainPage live={live}/>,
+    heart:<HeartPage live={live}/>,
+    liver:<LiverPage live={live}/>,
+    dna:<DNAPage live={live}/>,
+  };
   return (
     <div style={{width:"100vw",height:"100vh",background:"#020810",backgroundImage:"radial-gradient(ellipse at 50% 50%,rgba(0,229,255,0.025) 0%,transparent 70%)",overflow:"hidden",position:"relative",cursor:"crosshair"}}>
       {/* Global grid */}
